@@ -28,6 +28,7 @@ enhancement2
 
 Other enhancements
 ^^^^^^^^^^^^^^^^^^
+- Added :class:`pandas.api.typing.DatetimeIndexResampler`, :class:`pandas.api.typing.PeriodIndexResampler`, and :class:`pandas.api.typing.TimedeltaIndexResampler` to the public typing API (:issue:`66850`)
 - :class:`Period` now supports f-string formatting via ``__format__``, e.g. ``f"{period:%Y-%m}"`` (:issue:`48536`)
 - :class:`Series` and :class:`DataFrame` with ``timedelta64`` dtype now aligns fractional seconds in string representation for easier reading (:issue:`57188`)
 - :meth:`.DataFrameGroupBy.agg` now allows for the provided ``func`` to return a NumPy array (:issue:`63957`)
