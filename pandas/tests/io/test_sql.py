@@ -2031,7 +2031,8 @@ def test_api_date_and_index(conn, request):
 
 
 @pytest.mark.parametrize("conn", all_connectable)
-def test_api_timedelta(conn, request):
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+def test_api_timedelta(conn, request, unit):
     # see #6921
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -2039,7 +2040,11 @@ def test_api_timedelta(conn, request):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
             pandasSQL.drop_table("test_timedelta")
 
-    df = pd.to_timedelta(pd.Series(["00:00:01", "00:00:03"], name="foo")).to_frame()
+    df = (
+        pd.to_timedelta(pd.Series(["00:00:01", "00:00:03"], name="foo"))
+        .astype(f"timedelta64[{unit}]")
+        .to_frame()
+    )
 
     if conn_name == "sqlite_adbc_conn":
         request.node.add_marker(
@@ -2071,8 +2076,39 @@ def test_api_timedelta(conn, request):
             name="foo",
         )
     else:
-        expected = df["foo"].astype("int64")
+        expected = pd.Series([1_000_000_000, 3_000_000_000], name="foo")
     tm.assert_series_equal(result["foo"], expected)
+
+
+@pytest.mark.parametrize("conn", ["sqlite_buildin", *sqlite_connectable])
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("dtype_backend", ["numpy", "pyarrow"])
+def test_api_timedelta_nanoseconds(conn, request, unit, dtype_backend):
+    # GH#71941
+    conn = request.getfixturevalue(conn)
+    if dtype_backend == "pyarrow":
+        pytest.importorskip("pyarrow")
+        dtype = f"duration[{unit}][pyarrow]"
+    else:
+        dtype = f"timedelta64[{unit}]"
+    df = pd.DataFrame({"duration": pd.Series([2, 0, -3], dtype=dtype)})
+    # Integer construction uses the dtype's own unit, not seconds.
+    scale = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}[unit]
+    with tm.assert_produces_warning(UserWarning, match="the 'timedelta' type"):
+        df.to_sql("test_timedelta_nanoseconds", conn, index=False)
+    result = sql.read_sql_query("SELECT * FROM test_timedelta_nanoseconds", conn)
+    expected = pd.DataFrame({"duration": [2 * scale, 0, -3 * scale]})
+    tm.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("conn", ["sqlite_buildin", "sqlite_engine"])
+def test_api_timedelta_nanoseconds_overflow(conn, request):
+    # GH#71941: values outside the ns range must not silently change units.
+    conn = request.getfixturevalue(conn)
+    df = pd.DataFrame({"duration": np.array([9_223_372_037], dtype="timedelta64[s]")})
+    with tm.assert_produces_warning(UserWarning, match="the 'timedelta' type"):
+        with pytest.raises(pd.errors.OutOfBoundsTimedelta, match="Cannot convert"):
+            df.to_sql("test_timedelta_overflow", conn, index=False)
 
 
 @pytest.mark.parametrize("conn", all_connectable)
