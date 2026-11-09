@@ -3991,6 +3991,9 @@ class ArrowExtensionArray(
             ids=ids,
             **kwargs,
         )
+        if how == "ohlc":
+            # OHLC is 2D; the caller converts each output column to Arrow.
+            return result
         return self._groupby_result_to_arrow(result)
 
     def _groupby_quantile(

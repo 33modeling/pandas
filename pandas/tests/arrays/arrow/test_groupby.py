@@ -775,3 +775,134 @@ def test_groupby_count_return_arrow_dtype(data_missing):
         dtype="int64[pyarrow]",
     )
     tm.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "int8[pyarrow]",
+        "int16[pyarrow]",
+        "int32[pyarrow]",
+        "int64[pyarrow]",
+        "uint8[pyarrow]",
+        "uint16[pyarrow]",
+        "uint32[pyarrow]",
+        "uint64[pyarrow]",
+        "float32[pyarrow]",
+        "float64[pyarrow]",
+    ],
+)
+@pytest.mark.parametrize("frame", [False, True])
+@pytest.mark.parametrize("aggregate", [False, True])
+def test_groupby_ohlc_arrow(dtype, frame, aggregate):
+    # GH#71940
+    ser = pd.Series([1, None, 3, None, None], dtype=dtype, name="values")
+    obj = ser.to_frame() if frame else ser
+    grouped = obj.groupby(["a", "a", "b", "c", "c"])
+    result = grouped.agg("ohlc") if aggregate else grouped.ohlc()
+    expected = pd.DataFrame(
+        {name: [1, 3, None] for name in ["open", "high", "low", "close"]},
+        index=["a", "b", "c"],
+        dtype=dtype,
+    )
+    if frame:
+        expected.columns = pd.MultiIndex.from_product([["values"], expected.columns])
+    tm.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "int8[pyarrow]",
+        "int16[pyarrow]",
+        "int32[pyarrow]",
+        "int64[pyarrow]",
+        "uint8[pyarrow]",
+        "uint16[pyarrow]",
+        "uint32[pyarrow]",
+        "uint64[pyarrow]",
+        "float32[pyarrow]",
+        "float64[pyarrow]",
+    ],
+)
+@pytest.mark.parametrize("frame", [False, True])
+@pytest.mark.parametrize("aggregate", [False, True])
+def test_resample_ohlc_arrow(dtype, frame, aggregate):
+    # GH#71940: empty bins and all-NA bins must keep their Arrow masks.
+    index = pd.to_datetime(
+        ["2020-01-01 00:00", "2020-01-01 01:00", "2020-01-01 02:00", "2020-01-03 00:00"]
+    )
+    ser = pd.Series([2, 1, 3, None], dtype=dtype, index=index, name="values")
+    obj = ser.to_frame() if frame else ser
+    grouped = obj.resample("D")
+    result = grouped.agg("ohlc") if aggregate else grouped.ohlc()
+    expected = pd.DataFrame(
+        {
+            "open": [2, None, None],
+            "high": [3, None, None],
+            "low": [1, None, None],
+            "close": [3, None, None],
+        },
+        index=pd.date_range("2020-01-01", periods=3, freq="D"),
+        dtype=dtype,
+    )
+    if frame:
+        expected.columns = pd.MultiIndex.from_product([["values"], expected.columns])
+    tm.assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("dtype", ["int64[pyarrow]", "float64[pyarrow]"])
+@pytest.mark.parametrize("frame", [False, True])
+@pytest.mark.parametrize("resample", [False, True])
+def test_ohlc_arrow_empty(dtype, frame, resample):
+    # GH#71940
+    ser = pd.Series(
+        [], dtype=dtype, index=pd.DatetimeIndex([], name="when"), name="values"
+    )
+    obj = ser.to_frame() if frame else ser
+    grouped = obj.resample("D") if resample else obj.groupby(level=0)
+    result = grouped.ohlc()
+    expected = pd.DataFrame(
+        {name: pd.array([], dtype=dtype) for name in ["open", "high", "low", "close"]},
+        index=pd.DatetimeIndex([], name="when", freq="D" if resample else None),
+    )
+    if frame:
+        expected.columns = pd.MultiIndex.from_product([["values"], expected.columns])
+    tm.assert_frame_equal(result, expected)
+
+
+def test_groupby_ohlc_arrow_large_unsigned():
+    # GH#71940: converting the intermediate values to float would lose precision.
+    ser = pd.Series([2**63, 2**63 + 1], dtype="uint64[pyarrow]")
+    result = ser.groupby([0, 0]).ohlc()
+    expected = pd.DataFrame(
+        [[2**63, 2**63 + 1, 2**63, 2**63 + 1]],
+        columns=["open", "high", "low", "close"],
+        dtype="uint64[pyarrow]",
+    )
+    tm.assert_frame_equal(result, expected)
+
+
+def test_resample_ohlc_arrow_empty_duplicate_columns():
+    # GH#71940: empty outputs retain each column's dtype even with duplicate names.
+    index = pd.DatetimeIndex([], name="when")
+    frame = pd.DataFrame(
+        {
+            "first": pd.array([], dtype="int64[pyarrow]"),
+            "second": pd.array([], dtype="float64[pyarrow]"),
+        },
+        index=index,
+    )
+    frame.columns = ["values", "values"]
+    result = frame.resample("D").ohlc()
+    names = ["open", "high", "low", "close"]
+    expected = pd.concat(
+        [
+            pd.DataFrame({name: pd.array([], dtype=dtype) for name in names})
+            for dtype in ["int64[pyarrow]", "float64[pyarrow]"]
+        ],
+        axis=1,
+    )
+    expected.index = pd.DatetimeIndex([], name="when", freq="D")
+    expected.columns = pd.MultiIndex.from_product([["values", "values"], names])
+    tm.assert_frame_equal(result, expected)

@@ -1793,13 +1793,34 @@ class Resampler(BaseGroupBy[Any], PandasObject):
             # GH#42902
             obj = obj.copy()
             obj.index = _asfreq_compat(obj.index, self.freq)
-            if obj.ndim == 1:
+            is_series = obj.ndim == 1
+            if is_series:
                 obj = obj.to_frame()
-                obj = obj.reindex(["open", "high", "low", "close"], axis=1)
-            else:
-                mi = MultiIndex.from_product(
-                    [obj.columns, ["open", "high", "low", "close"]]
+            arrow_columns = {
+                i: obj.iloc[:, i].array
+                for i, dtype in enumerate(obj.dtypes)
+                if isinstance(dtype, ArrowDtype)
+            }
+            agg_names = ["open", "high", "low", "close"]
+            if arrow_columns:
+                # Build each Arrow column separately, including duplicate labels.
+                arrays = {
+                    4 * i + j: arrow_columns.get(i, np.empty(0))
+                    for i in range(len(obj.columns))
+                    for j in range(4)
+                }
+                columns = (
+                    agg_names
+                    if is_series
+                    else MultiIndex.from_product([obj.columns, agg_names])
                 )
+                result = obj._constructor(arrays, index=obj.index)
+                result.columns = columns
+                return result
+            if is_series:
+                obj = obj.reindex(agg_names, axis=1)
+            else:
+                mi = MultiIndex.from_product([obj.columns, agg_names])
                 obj = obj.reindex(mi, axis=1)
             return obj
 
